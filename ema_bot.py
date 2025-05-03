@@ -1,89 +1,67 @@
 import requests
 import pandas as pd
-import schedule
 import time
-from ta.trend import EMAIndicator
-from colorama import Fore, Style
-import os
-import telegram
-
-bot = telegram.Bot(token="8039833735:AAFwuBUQgNKB9TEA9l4uIYBitzyCO4I5CKE")
-bot.send_message(chat_id=6233846415, text="✅ Ton bot Telegram est bien connecté !")
-
-# === CONFIG ===
-API_KEY = "votre_clef_api_bybit"  # À remplacer si besoin
-TELEGRAM_TOKEN = "8039833735:AAFwuBUQgNKB9TEA9l4uIYBitzyCO4I5CKE"
-CHAT_ID = "6233846415"
-SYMBOL_COUNT = 500  # Nombre d'altcoins à scanner
-TIMEFRAME = "1h"  # timeframe des bougies
-
-def send_telegram_alert(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": message}
-    try:
-        requests.post(url, json=payload)
-    except Exception as e:
-        print("Erreur Telegram:", e)
+from datetime import datetime
+import colorama
+from colorama import Fore
+colorama.init()
 
 def api_request(path):
-    url = f"https://api.bybit.com{path}"
     try:
+        url = f"https://api.bybit.com{path}"
         response = requests.get(url)
         return response.json()
     except Exception as e:
-        print("Erreur API:", e)
-        return {}
+        print(Fore.RED + f"Erreur API : {e}" + Fore.RESET)
+        return None
 
 def get_top_symbols():
-    path = "/v5/market/tickers?category=linear"
-    data = api_request(path)
-    try:
-        tickers = data["result"]["list"]
-        usdt_pairs = [t["symbol"] for t in tickers if "USDT" in t["symbol"] and "PERP" in t["symbol"]]
-        return usdt_pairs[:SYMBOL_COUNT]
-    except:
-        print("Erreur récupération des paires.")
+    data = api_request("/v5/market/tickers?category=linear")
+    if data is None or "result" not in data:
         return []
+    tickers = data["result"]["list"]
+    top_symbols = [t["symbol"] for t in tickers if t["symbol"].endswith("USDT")]
+    return top_symbols[200:500]  # top 200–500 uniquement
 
-def get_ema_cross(symbol):
-    url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={symbol}&interval={TIMEFRAME}&limit=100"
+def get_klines(symbol, interval="15"):
+    url = f"/v5/market/kline?category=linear&symbol={symbol}&interval={interval}&limit=50"
     data = api_request(url)
+    if data is None or "result" not in data:
+        return None
     try:
         df = pd.DataFrame(data["result"]["list"])
-        df.columns = ["timestamp", "open", "high", "low", "close", "volume", "_"]
-        df["close"] = pd.to_numeric(df["close"])
-        ema_9 = EMAIndicator(close=df["close"], window=9).ema_indicator()
-        ema_21 = EMAIndicator(close=df["close"], window=21).ema_indicator()
-        if ema_9.iloc[-2] < ema_21.iloc[-2] and ema_9.iloc[-1] > ema_21.iloc[-1]:
-            return "cross_up"
-        elif ema_9.iloc[-2] > ema_21.iloc[-2] and ema_9.iloc[-1] < ema_21.iloc[-1]:
-            return "cross_down"
-        else:
-            return "no_cross"
+        df.columns = ["timestamp", "open", "high", "low", "close", "volume", "turnover"]
+        df["close"] = df["close"].astype(float)
+        return df
     except Exception as e:
-        print(f"{symbol} erreur EMA:", e)
-        return "error"
+        print(Fore.RED + f"Erreur conversion dataframe pour {symbol} : {e}" + Fore.RESET)
+        return None
+
+def ema_indicator(df, window):
+    return df["close"].ewm(span=window, adjust=False).mean()
 
 def scan_top500():
-    print("🔍 Scanning top 500 USDT Perp...")
+    print(Fore.CYAN + "🚀 EMA bot lancé – scan immédiat du top 500 Bybit Perp" + Fore.RESET)
+    print("📊 Scan en cours...")
+
     symbols = get_top_symbols()
+    if not symbols:
+        print(Fore.RED + "❌ Aucun symbole reçu du top 500." + Fore.RESET)
+        return
+
     for symbol in symbols:
-        result = get_ema_cross(symbol)
-        if result == "cross_up":
-            print(Fore.GREEN + f"📈 CROSS UP: {symbol}" + Style.RESET_ALL)
-            send_telegram_alert(f"📈 EMA 9/21 CROSS UP: {symbol}")
-        elif result == "cross_down":
-            print(Fore.RED + f"📉 CROSS DOWN: {symbol}" + Style.RESET_ALL)
-            send_telegram_alert(f"📉 EMA 9/21 CROSS DOWN: {symbol}")
-        else:
-            pass  # pas d'action
+        df = get_klines(symbol)
+        if df is None or len(df) < 21:
+            continue
 
-print("🚀 EMA bot lancé – scan toutes les 4h sur le top 500 Bybit Perp.")
-schedule.every(4).hours.do(scan_top500)
+        ema_9 = ema_indicator(df, 9)
+        ema_21 = ema_indicator(df, 21)
 
-# Premier scan direct au démarrage
-scan_top500()
+        if ema_9.iloc[-2] < ema_21.iloc[-2] and ema_9.iloc[-1] > ema_21.iloc[-1]:
+            print(Fore.GREEN + f"💥 Cross HAUT détecté sur {symbol}" + Fore.RESET)
+        elif ema_9.iloc[-2] > ema_21.iloc[-2] and ema_9.iloc[-1] < ema_21.iloc[-1]:
+            print(Fore.RED + f"🔻 Cross BAS détecté sur {symbol}" + Fore.RESET)
 
-while True:
-    schedule.run_pending()
-    time.sleep(1)
+# Lancement direct du scan à l'exécution du script
+if __name__ == "__main__":
+    scan_top500()
