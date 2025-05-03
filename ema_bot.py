@@ -5,6 +5,10 @@ import time
 from ta.trend import EMAIndicator
 from colorama import Fore, Style
 import os
+import telegram
+
+bot = telegram.Bot(token="8039833735:AAFwuBUQgNKB9TEA9l4uIYBitzyCO4I5CKE")
+bot.send_message(chat_id=6233846415, text="✅ Ton bot Telegram est bien connecté !")
 
 # === CONFIG ===
 API_KEY = "votre_clef_api_bybit"  # À remplacer si besoin
